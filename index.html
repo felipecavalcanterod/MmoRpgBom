@@ -1155,55 +1155,125 @@ cols.forEach((k, i) => {
 });
 
 $("go").onclick = async () => {
-  const rawUser = $("acc-user").value.trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
+  const button = $("go");
+  const errorBox = $("auth-err");
+  const user = $("acc-user").value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "");
   const pass = $("acc-pass").value;
-  $("auth-err").textContent = "";
+  const localKey = "tibia_auth_" + user;
 
-  if (rawUser.length < 3) { $("auth-err").textContent = "Usuário deve ter pelo menos 3 letras/números."; return; }
-  if (pass.length < 4) { $("auth-err").textContent = "Senha deve ter pelo menos 4 caracteres."; return; }
+  errorBox.textContent = "";
 
-  const pHash = hashPass(pass);
+  if (user.length < 3) {
+    errorBox.textContent = "O usuário precisa ter pelo menos 3 letras ou números.";
+    return;
+  }
+  if (pass.length < 4) {
+    errorBox.textContent = "A senha precisa ter pelo menos 4 caracteres.";
+    return;
+  }
 
-  if (authMode === "register") {
-    const charName = ($("ni").value.trim().slice(0, 14)) || rawUser;
-    const newAcc = {
-      passHash: pHash,
-      createdAt: Date.now(),
-      save: {
-        name: charName, col: P.col, lvl: 1, xp: 0, hp: 100, mp: 50,
-        gold: 40, x: 80, y: 83, eq: { weapon: null, armor: null },
-        inv: [{ id: "pot_hp", q: 2 }, { id: "pot_mp", q: 1 }]
+  button.disabled = true;
+  button.textContent = "AGUARDE...";
+
+  try {
+    let account = null;
+
+    if (authMode === "register") {
+      const characterName = $("ni").value.trim().slice(0, 14) || user;
+      const newAccount = {
+        passHash: hashPass(pass),
+        createdAt: Date.now(),
+        save: {
+          name: characterName,
+          col: P.col,
+          lvl: 1,
+          xp: 0,
+          hp: 100,
+          mp: 50,
+          gold: 40,
+          x: 80,
+          y: 83,
+          eq: { weapon: null, armor: null },
+          inv: [
+            { id: "pot_hp", q: 2 },
+            { id: "pot_mp", q: 1 }
+          ]
+        }
+      };
+
+      let savedOnline = false;
+
+      if (db) {
+        try {
+          const snapshot = await db.ref("accounts/" + user).get();
+          if (snapshot.exists()) {
+            errorBox.textContent = "Esse usuário já existe. Tente entrar na sua conta.";
+            return;
+          }
+          await db.ref("accounts/" + user).set(newAccount);
+          savedOnline = true;
+        } catch (firebaseError) {
+          console.warn("Cadastro Firebase indisponível:", firebaseError);
+        }
       }
-    };
 
-    if (db) {
-      const snap = await db.ref("accounts/" + rawUser).get();
-      if (snap.exists()) { $("auth-err").textContent = "Esse usuário já existe!"; return; }
-      await db.ref("accounts/" + rawUser).set(newAcc);
+      if (!savedOnline) {
+        if (localStorage.getItem(localKey)) {
+          errorBox.textContent = "Esse usuário já existe neste navegador.";
+          return;
+        }
+        localStorage.setItem(localKey, JSON.stringify(newAccount));
+        $("st").textContent = "Conta salva somente neste navegador.";
+      }
+
+      account = newAccount;
     } else {
-      if (localStorage.getItem("tibia_auth_" + rawUser)) { $("auth-err").textContent = "Esse usuário já existe neste navegador!"; return; }
-      localStorage.setItem("tibia_auth_" + rawUser, JSON.stringify(newAcc));
-    }
-    applyAccountData(rawUser, newAcc.save);
-  } else {
-    let acc = null;
-    if (db) {
-      const snap = await db.ref("accounts/" + rawUser).get();
-      if (snap.exists()) acc = snap.val();
-    }
-    if (!acc) {
-      try { acc = JSON.parse(localStorage.getItem("tibia_auth_" + rawUser) || "null"); } catch (e) {}
-    }
-    if (!acc) { $("auth-err").textContent = "Conta não encontrada. Crie uma conta na aba ao lado."; return; }
-    if (acc.passHash !== pHash) { $("auth-err").textContent = "Senha incorreta!"; return; }
+      if (db) {
+        try {
+          const snapshot = await db.ref("accounts/" + user).get();
+          if (snapshot.exists()) account = snapshot.val();
+        } catch (firebaseError) {
+          console.warn("Login Firebase indisponível:", firebaseError);
+        }
+      }
 
-    let saved = acc.save || {};
-    try {
-      const localSave = JSON.parse(localStorage.getItem("tibia_acc_" + rawUser) || "null");
-      if (localSave && (!saved.updatedAt || localSave.updatedAt > saved.updatedAt)) saved = localSave;
-    } catch (e) {}
+      if (!account) {
+        try {
+          account = JSON.parse(localStorage.getItem(localKey) || "null");
+        } catch (storageError) {
+          account = null;
+        }
+      }
 
-    applyAccountData(rawUser, saved);
+      if (!account) {
+        errorBox.textContent =
+          "Conta não encontrada. Selecione “Criar Conta” ou verifique a conexão com o servidor.";
+        return;
+      }
+
+      if (account.passHash !== hashPass(pass)) {
+        errorBox.textContent = "Senha incorreta.";
+        return;
+      }
+    }
+
+    if (!account.save) {
+      errorBox.textContent = "Os dados dessa conta estão incompletos.";
+      return;
+    }
+
+    applyAccountData(user, account.save);
+  } catch (error) {
+    console.error("Erro ao entrar no jogo:", error);
+    errorBox.textContent =
+      "Não foi possível entrar. Verifique a conexão e tente novamente.";
+  } finally {
+    button.disabled = false;
+    button.textContent =
+      authMode === "register" ? "CRIAR CONTA E JOGAR" : "ENTRAR NO REINO";
   }
 };
 
